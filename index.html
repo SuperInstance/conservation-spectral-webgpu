@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conservation Spectral SDK — WebGPU</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --purple: #bc8cff;
+    --orange: #d29922; --cyan: #39d2c0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.5; min-height: 100vh;
+  }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 24px; display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; }
+  header .badge {
+    background: var(--purple); color: #fff; font-size: 11px;
+    padding: 2px 8px; border-radius: 12px; font-weight: 600;
+  }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  #fallback {
+    display: none; background: var(--red); color: #fff; padding: 32px;
+    border-radius: 8px; margin: 24px; text-align: center; font-size: 18px;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+  }
+  .card-header {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px;
+  }
+  .card-body { padding: 16px; }
+  textarea {
+    width: 100%; min-height: 200px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 12px;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; font-size: 13px;
+    resize: vertical;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .btn-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  button {
+    background: var(--accent); color: #fff; border: none; padding: 8px 20px;
+    border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.secondary { background: var(--border); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  .metric { display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .metric:last-child { border-bottom: none; }
+  .metric-label { color: var(--muted); font-size: 13px; }
+  .metric-value { font-weight: 600; font-family: 'SF Mono', monospace; font-size: 14px; }
+  .metric-value.good { color: var(--green); }
+  .metric-value.warn { color: var(--orange); }
+  .metric-value.bad { color: var(--red); }
+  canvas#graphCanvas { width: 100%; height: 400px; background: var(--bg);
+    border-radius: 6px; border: 1px solid var(--border); }
+  #status { padding: 8px 12px; font-size: 13px; color: var(--muted); min-height: 20px; }
+  .anomaly { background: rgba(248,81,73,0.1); border-left: 3px solid var(--red);
+    padding: 8px 12px; margin-top: 8px; border-radius: 0 6px 6px 0; font-size: 13px; }
+  .fingerprint { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px; margin-top: 12px; }
+  .fp-item { background: var(--bg); padding: 8px 12px; border-radius: 6px; }
+  .fp-label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+  .fp-value { font-size: 16px; font-weight: 600; font-family: 'SF Mono', monospace; }
+  .node-labels { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .node-tag { padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+  .legend { display: flex; gap: 16px; margin-top: 12px; font-size: 13px; }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend .dot { width: 12px; height: 12px; border-radius: 50%; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎵 Conservation Spectral SDK</h1>
+  <span class="badge">WebGPU</span>
+  <span style="color:var(--muted);font-size:13px;">Spectral graph theory for conservation analysis — runs entirely in your browser</span>
+</header>
+
+<div id="fallback">
+  ⚠️ WebGPU is not supported in this browser. Please use Chrome 113+, Edge 113+, or another WebGPU-capable browser.
+</div>
+
+<div class="container">
+  <div id="status">Initializing WebGPU…</div>
+
+  <div class="grid">
+    <!-- Input Panel -->
+    <div class="card">
+      <div class="card-header">📋 Transition Matrix Input</div>
+      <div class="card-body">
+        <textarea id="matrixInput" spellcheck="false" placeholder="Paste a transition matrix JSON (square 2D array) or click 'Load Example'"></textarea>
+        <div class="btn-row">
+          <button id="btnAnalyze" disabled>Analyze</button>
+          <button class="secondary" id="btnExample">Load 5-Node Chord Example</button>
+          <button class="secondary" id="btnClear">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics Panel -->
+    <div class="card">
+      <div class="card-header">📊 Spectral Metrics</div>
+      <div class="card-body">
+        <div id="metrics">
+          <div class="metric"><span class="metric-label">Spectral Gap (λ₁ − λ₀)</span><span class="metric-value" id="metricGap">—</span></div>
+          <div class="metric"><span class="metric-label">Fiedler Value (λ₁)</span><span class="metric-value" id="metricFiedler">—</span></div>
+          <div class="metric"><span class="metric-label">Cheeger Constant (h)</span><span class="metric-value" id="metricCheeger">—</span></div>
+          <div class="metric"><span class="metric-label">Spectral Entropy (H)</span><span class="metric-value" id="metricEntropy">—</span></div>
+          <div class="metric"><span class="metric-label">Effective Dimension</span><span class="metric-value" id="metricEffDim">—</span></div>
+        </div>
+        <div class="fingerprint" id="fingerprintPanel"></div>
+      </div>
+    </div>
+
+    <!-- Eigenvalues Table -->
+    <div class="card">
+      <div class="card-header">🔢 Eigenvalues & Conservation Ratios</div>
+      <div class="card-body" style="max-height:360px;overflow:auto;">
+        <table id="eigenTable">
+          <thead><tr><th>#</th><th>Eigenvalue</th><th>Conservation Ratio</th><th>Note</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Graph Visualization -->
+    <div class="card">
+      <div class="card-header">🎨 Graph — Fiedler Partition</div>
+      <div class="card-body">
+        <canvas id="graphCanvas"></canvas>
+        <div class="legend">
+          <span><span class="dot" style="background:var(--cyan)"></span> Partition A (Fiedler ≥ 0)</span>
+          <span><span class="dot" style="background:var(--purple)"></span> Partition B (Fiedler &lt; 0)</span>
+        </div>
+        <div class="node-labels" id="nodeLabels"></div>
+      </div>
+    </div>
+
+    <!-- Anomalies -->
+    <div class="card" style="grid-column: 1 / -1;">
+      <div class="card-header">🚨 Anomalies</div>
+      <div class="card-body" id="anomalyBody">
+        <span style="color:var(--muted);font-size:13px;">No analysis run yet.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     WGSL COMPUTE SHADERS
+     ═══════════════════════════════════════════════════════════════ -->
+
+<!-- Laplacian: L = D - W (unnormalized) -->
+<script id="wgsl-laplacian" type="x-shader">
+// Laplacian compute shader
+// Input:  transition_matrix[n*n] (row-major)
+// Output: laplacian[n*n], degrees[n]
+@group(0) @binding(0) var<storage, read> transitions: array<f32>;
+@group(0) @binding(1) var<storage, read_write> laplacian: array<f32>;
+@group(0) @binding(2) var<storage, read_write> degrees: array<f32>;
+@group(0) @binding(3) var<uniform> params: vec4u; // (n, 0, 0, 0)
+
+@compute @workgroup_size(64)
+fn laplacian_compute(@builtin(global_invocation_id) gid: vec3u) {
+  let n = params.x;
+  let idx = gid.x;
+  if (idx >= n * n) { return; }
+
+  let i = idx / n;
+  let j = idx % n;
+
+  // Compute degree of row i (first pass would be needed for real GPU,
+  // but we can compute inline since degrees are row sums)
+  var deg_i: f32 = 0.0;
+  for (var k = 0u; k < n; k = k + 1u) {
+    deg_i = deg_i + transitions[i * n + k];
+  }
+
+  if (i == j) {
+    degrees[i] = deg_i;
+    laplacian[idx] = deg_i;
+  } else {
+    laplacian[idx] = -transitions[idx];
+  }
+}
+</script>
+
+<!-- Matrix-vector multiply: y = A * x -->
+<script id="wgsl-matvec" type="x-shader">
+@group(0) @binding(0) var<storage, read> matrix: array<f32>;
+@group(0) @binding(1) var<storage, read> vec_in: array<f32>;
+@group(0) @binding(2) var<storage, read_write> vec_out: array<f32>;
+@group(0) @binding(3) var<uniform> params: vec4u;
+
+@compute @workgroup_size(64)
+fn mat_vec_multiply(@builtin(global_invocation_id) gid: vec3u) {
+  let n = params.x;
+  let i = gid.x;
+  if (i >= n) { return; }
+
+  var sum: f32 = 0.0;
+  for (var j = 0u; j < n; j = j + 1u) {
+    sum = sum + matrix[i * n + j] * vec_in[j];
+  }
+  vec_out[i] = sum;
+}
+</script>
+
+<!-- Normalize vector: v = v / ||v|| -->
+<script id="wgsl-normalize" type="x-shader">
+@group(0) @binding(0) var<storage, read_write> vec: array<f32>;
+@group(0) @binding(1) var<storage, read_write> norm_out: array<f32>; // [0] = norm
+@group(0) @binding(2) var<uniform> params: vec4u;
+
+@compute @workgroup_size(1)
+fn normalize_vec(@builtin(global_invocation_id) gid: vec3u) {
+  let n = params.x;
+  if (gid.x > 0u) { return; }
+
+  var sum_sq: f32 = 0.0;
+  for (var i = 0u; i < n; i = i + 1u) {
+    sum_sq = sum_sq + vec[i] * vec[i];
+  }
+  let nrm = sqrt(sum_sq);
+  norm_out[0] = nrm;
+
+  if (nrm > 1e-12) {
+    for (var i = 0u; i < n; i = i + 1u) {
+      vec[i] = vec[i] / nrm;
+    }
+  }
+}
+</script>
+
+<!-- Deflation: v = v - (v · e) * e -->
+<script id="wgsl-deflate" type="x-shader">
+@group(0) @binding(0) var<storage, read_write> vec: array<f32>;
+@group(0) @binding(1) var<storage, read> eigvec: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dot_out: array<f32>; // [0] = dot product
+@group(0) @binding(3) var<uniform> params: vec4u;
+
+@compute @workgroup_size(1)
+fn deflate(@builtin(global_invocation_id) gid: vec3u) {
+  let n = params.x;
+  if (gid.x > 0u) { return; }
+
+  var d: f32 = 0.0;
+  for (var i = 0u; i < n; i = i + 1u) {
+    d = d + vec[i] * eigvec[i];
+  }
+  dot_out[0] = d;
+
+  for (var i = 0u; i < n; i = i + 1u) {
+    vec[i] = vec[i] - d * eigvec[i];
+  }
+}
+</script>
+
+<!-- Conservation ratio computation per eigenvector -->
+<script id="wgsl-conservation" type="x-shader">
+// Computes projected gradient variance for conservation ratio
+// Input: eigenvectors[n*numVecs], attribute[n]
+// Output: ratios[numVecs]
+@group(0) @binding(0) var<storage, read> eigenvectors: array<f32>;
+@group(0) @binding(1) var<storage, read> attribute: array<f32>;
+@group(0) @binding(2) var<storage, read_write> ratios: array<f32>;
+@group(0) @binding(3) var<uniform> params: vec4u; // (n, numVecs, 0, 0)
+
+@compute @workgroup_size(1)
+fn conservation_compute(@builtin(global_invocation_id) gid: vec3u) {
+  let n = params.x;
+  let numVecs = params.y;
+  let k = gid.x;
+  if (k >= numVecs) { return; }
+
+  // Compute projected values
+  var proj: array<f32, 256>; // max n=256
+  for (var i = 0u; i < n; i = i + 1u) {
+    proj[i] = attribute[i] * eigenvectors[k * n + i];
+  }
+
+  // Consecutive differences
+  var diffs: array<f32, 256>;
+  var mean_d: f32 = 0.0;
+  let numDiffs = n - 1u;
+  for (var i = 0u; i < numDiffs; i = i + 1u) {
+    diffs[i] = proj[i + 1u] - proj[i];
+    mean_d = mean_d + diffs[i];
+  }
+  mean_d = mean_d / f32(numDiffs);
+
+  // Variance
+  var variance: f32 = 0.0;
+  for (var i = 0u; i < numDiffs; i = i + 1u) {
+    let d = diffs[i] - mean_d;
+    variance = variance + d * d;
+  }
+  variance = variance / f32(numDiffs);
+
+  ratios[k] = variance;
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// Conservation Spectral SDK — WebGPU Host Code
+// ═══════════════════════════════════════════════════════════════
+
+const CHORD_LABELS = ['C', 'Dm', 'Em', 'F', 'G'];
+const NODE_COLORS = ['#39d2c0', '#bc8cff'];
+
+// 5-node chord progression transition matrix (baked test data)
+const TEST_DATA = [
+  [0.05, 0.35, 0.20, 0.25, 0.15],
+  [0.10, 0.05, 0.40, 0.20, 0.25],
+  [0.15, 0.20, 0.05, 0.35, 0.25],
+  [0.25, 0.15, 0.20, 0.05, 0.35],
+  [0.30, 0.20, 0.15, 0.25, 0.10],
+];
+
+let gpuDevice = null;
+let analysisResult = null;
+
+// ── WebGPU Init ──────────────────────────────────────────
+async function initWebGPU() {
+  const status = document.getElementById('status');
+  if (!navigator.gpu) {
+    document.getElementById('fallback').style.display = 'block';
+    document.querySelector('.container').style.display = 'none';
+    status.textContent = 'WebGPU not available.';
+    return false;
+  }
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) {
+    document.getElementById('fallback').style.display = 'block';
+    document.querySelector('.container').style.display = 'none';
+    status.textContent = 'No WebGPU adapter found.';
+    return false;
+  }
+  gpuDevice = await adapter.requestDevice();
+  status.textContent = '✅ WebGPU ready — load example data or paste your own transition matrix.';
+  document.getElementById('btnAnalyze').disabled = false;
+  return true;
+}
+
+// ── Shader Module Helpers ────────────────────────────────
+function getShader(id) {
+  return document.getElementById(id).textContent;
+}
+
+function createPipeline(shaderCode, entryPoint) {
+  const module = gpuDevice.createShaderModule({ code: shaderCode });
+  return gpuDevice.createComputePipeline({
+    layout: 'auto',
+    compute: { module, entryPoint },
+  });
+}
+
+function createBuffer(data, usage) {
+  const buf = gpuDevice.createBuffer({
+    size: data.byteLength,
+    usage,
+    mappedAtCreation: true,
+  });
+  new Float32Array(buf.getMappedRange()).set(data);
+  buf.unmap();
+  return buf;
+}
+
+function createBufferEmpty(size, usage) {
+  return gpuDevice.createBuffer({ size, usage });
+}
+
+async function readBuffer(buf, size) {
+  const staging = gpuDevice.createBuffer({
+    size,
+    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  });
+  const encoder = gpuDevice.createCommandEncoder();
+  encoder.copyBufferToBuffer(buf, 0, staging, 0, size);
+  gpuDevice.queue.submit([encoder.finish()]);
+  await staging.mapAsync(GPUMapMode.READ);
+  const data = new Float32Array(staging.getMappedRange().slice(0));
+  staging.unmap();
+  staging.destroy();
+  return data;
+}
+
+// ── Core Compute: Laplacian via WebGPU ───────────────────
+async function gpuComputeLaplacian(transitions, n) {
+  const tData = new Float32Array(n * n);
+  for (let i = 0; i < n * n; i++) tData[i] = transitions[i];
+
+  const bufT = createBuffer(tData, GPUBufferUsage.STORAGE);
+  const bufL = createBufferEmpty(n * n * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+  const bufD = createBufferEmpty(n * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+  const bufP = createBuffer(new Uint32Array([n, 0, 0, 0]), GPUBufferUsage.UNIFORM);
+
+  const pipeline = createPipeline(getShader('wgsl-laplacian'), 'laplacian_compute');
+  const bg = gpuDevice.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: bufT } },
+      { binding: 1, resource: { buffer: bufL } },
+      { binding: 2, resource: { buffer: bufD } },
+      { binding: 3, resource: { buffer: bufP } },
+    ],
+  });
+
+  const encoder = gpuDevice.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(pipeline);
+  pass.setBindGroup(0, bg);
+  pass.dispatchWorkgroups(Math.ceil((n * n) / 64));
+  pass.end();
+  gpuDevice.queue.submit([encoder.finish()]);
+
+  const laplacian = await readBuffer(bufL, n * n * 4);
+  const degrees = await readBuffer(bufD, n * 4);
+
+  bufT.destroy(); bufL.destroy(); bufD.destroy(); bufP.destroy();
+  return { laplacian, degrees };
+}
+
+// ── Core Compute: Power Iteration via WebGPU ─────────────
+async function gpuPowerIteration(matrixFlat, n, maxIter = 200, deflationVecs = []) {
+  // Shifted matrix: B = sigma*I - L to find largest eigenpair
+  // Find sigma (max diagonal)
+  let sigma = 0;
+  for (let i = 0; i < n; i++) sigma = Math.max(sigma, Math.abs(matrixFlat[i * n + i]));
+  sigma *= 2;
+
+  const shiftedData = new Float32Array(n * n);
+  for (let i = 0; i < n * n; i++) {
+    shiftedData[i] = (i % (n + 1) === 0 ? sigma : 0) - matrixFlat[i];
+  }
+
+  const bufMat = createBuffer(shiftedData, GPUBufferUsage.STORAGE);
+  const bufVecIn = createBufferEmpty(n * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+  const bufVecOut = createBufferEmpty(n * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+  const bufNorm = createBufferEmpty(4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+  const bufDot = createBufferEmpty(4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+  const bufParams = createBuffer(new Uint32Array([n, 0, 0, 0]), GPUBufferUsage.UNIFORM);
+
+  const pipeMatVec = createPipeline(getShader('wgsl-matvec'), 'mat_vec_multiply');
+  const pipeNorm = createPipeline(getShader('wgsl-normalize'), 'normalize_vec');
+  const pipeDeflate = createPipeline(getShader('wgsl-deflate'), 'deflate');
+
+  // Deflation eigenvector buffers
+  const defBufs = deflationVecs.map(v => createBuffer(new Float32Array(v), GPUBufferUsage.STORAGE));
+
+  // Random initial vector
+  let vec = new Float32Array(n);
+  for (let i = 0; i < n; i++) vec[i] = Math.random() - 0.5;
+
+  // Upload initial vector
+  const initBuf = createBuffer(vec, GPUBufferUsage.COPY_SRC);
+  const copyEnc = gpuDevice.createCommandEncoder();
+  copyEnc.copyBufferToBuffer(initBuf, 0, bufVecIn, 0, n * 4);
+  gpuDevice.queue.submit([copyEnc.finish()]);
+  initBuf.destroy();
+
+  let eigenvalue = 0;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    // Deflate against previous eigenvectors
+    for (const defBuf of defBufs) {
+      const defBg = gpuDevice.createBindGroup({
+        layout: pipeDeflate.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: bufVecIn } },
+          { binding: 1, resource: { buffer: defBuf } },
+          { binding: 2, resource: { buffer: bufDot } },
+          { binding: 3, resource: { buffer: bufParams } },
+        ],
+      });
+      const enc = gpuDevice.createCommandEncoder();
+      const p = enc.beginComputePass();
+      p.setPipeline(pipeDeflate);
+      p.setBindGroup(0, defBg);
+      p.dispatchWorkgroups(1);
+      p.end();
+      gpuDevice.queue.submit([enc.finish()]);
+    }
+
+    // Normalize before multiply
+    {
+      const bg = gpuDevice.createBindGroup({
+        layout: pipeNorm.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: bufVecIn } },
+          { binding: 1, resource: { buffer: bufNorm } },
+          { binding: 2, resource: { buffer: bufParams } },
+        ],
+      });
+      const enc = gpuDevice.createCommandEncoder();
+      const p = enc.beginComputePass();
+      p.setPipeline(pipeNorm);
+      p.setBindGroup(0, bg);
+      p.dispatchWorkgroups(1);
+      p.end();
+      gpuDevice.queue.submit([enc.finish()]);
+    }
+
+    // y = B * v
+    {
+      const bg = gpuDevice.createBindGroup({
+        layout: pipeMatVec.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: bufMat } },
+          { binding: 1, resource: { buffer: bufVecIn } },
+          { binding: 2, resource: { buffer: bufVecOut } },
+          { binding: 3, resource: { buffer: bufParams } },
+        ],
+      });
+      const enc = gpuDevice.createCommandEncoder();
+      const p = enc.beginComputePass();
+      p.setPipeline(pipeMatVec);
+      p.setBindGroup(0, bg);
+      p.dispatchWorkgroups(Math.ceil(n / 64));
+      p.end();
+      gpuDevice.queue.submit([enc.finish()]);
+    }
+
+    // Copy out -> in, and read norm
+    const copyEnc = gpuDevice.createCommandEncoder();
+    copyEnc.copyBufferToBuffer(bufVecOut, 0, bufVecIn, 0, n * 4);
+    gpuDevice.queue.submit([copyEnc.finish()]);
+
+    // Read eigenvalue estimate (norm of output before normalization)
+    const normData = await readBuffer(bufNorm, 4);
+    eigenvalue = sigma - normData[0]; // unshift
+  }
+
+  // Final normalize
+  {
+    const bg = gpuDevice.createBindGroup({
+      layout: pipeNorm.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: bufVecIn } },
+        { binding: 1, resource: { buffer: bufNorm } },
+        { binding: 2, resource: { buffer: bufParams } },
+      ],
+    });
+    const enc = gpuDevice.createCommandEncoder();
+    const p = enc.beginComputePass();
+    p.setPipeline(pipeNorm);
+    p.setBindGroup(0, bg);
+    p.dispatchWorkgroups(1);
+    p.end();
+    gpuDevice.queue.submit([enc.finish()]);
+  }
+
+  const eigvec = await readBuffer(bufVecIn, n * 4);
+
+  bufMat.destroy(); bufVecIn.destroy(); bufVecOut.destroy();
+  bufNorm.destroy(); bufDot.destroy(); bufParams.destroy();
+  defBufs.forEach(b => b.destroy());
+
+  return { eigenvalue, eigvec: Array.from(eigvec) };
+}
+
+// ── GPU Conservation Ratios ──────────────────────────────
+async function gpuConservationRatios(eigenvectors, attribute, n, numVecs) {
+  const flatEvecs = new Float32Array(n * numVecs);
+  for (let k = 0; k < numVecs; k++) {
+    for (let i = 0; i < n; i++) flatEvecs[k * n + i] = eigenvectors[k][i];
+  }
+  const attrData = new Float32Array(attribute);
+
+  const bufEvec = createBuffer(flatEvecs, GPUBufferUsage.STORAGE);
+  const bufAttr = createBuffer(attrData, GPUBufferUsage.STORAGE);
+  const bufRatios = createBufferEmpty(numVecs * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+  const bufP = createBuffer(new Uint32Array([n, numVecs, 0, 0]), GPUBufferUsage.UNIFORM);
+
+  const pipeline = createPipeline(getShader('wgsl-conservation'), 'conservation_compute');
+  const bg = gpuDevice.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: bufEvec } },
+      { binding: 1, resource: { buffer: bufAttr } },
+      { binding: 2, resource: { buffer: bufRatios } },
+      { binding: 3, resource: { buffer: bufP } },
+    ],
+  });
+
+  const enc = gpuDevice.createCommandEncoder();
+  const p = enc.beginComputePass();
+  p.setPipeline(pipeline);
+  p.setBindGroup(0, bg);
+  p.dispatchWorkgroups(numVecs);
+  p.end();
+  gpuDevice.queue.submit([enc.finish()]);
+
+  const ratios = await readBuffer(bufRatios, numVecs * 4);
+  bufEvec.destroy(); bufAttr.destroy(); bufRatios.destroy(); bufP.destroy();
+  return Array.from(ratios);
+}
+
+// ── Full Eigendecomposition via GPU power iteration + deflation ──
+async function gpuEigendecompose(laplacianFlat, n) {
+  const eigenvalues = [];
+  const eigenvectors = [];
+
+  // Find trivial eigenvector first (all-ones for unnormalized Laplacian)
+  const trivial = new Array(n).fill(1 / Math.sqrt(n));
+  eigenvalues.push(0);
+  eigenvectors.push(trivial);
+
+  // Find remaining eigenpairs via shifted power iteration with deflation
+  const deflationVecs = [trivial];
+  for (let k = 1; k < n; k++) {
+    const { eigenvalue, eigvec } = await gpuPowerIteration(laplacianFlat, n, 300, deflationVecs);
+    eigenvalues.push(eigenvalue);
+    eigenvectors.push(eigvec);
+    deflationVecs.push(eigvec);
+  }
+
+  // Sort by eigenvalue ascending
+  const indices = eigenvalues.map((_, i) => i);
+  indices.sort((a, b) => eigenvalues[a] - eigenvalues[b]);
+
+  return {
+    values: indices.map(i => eigenvalues[i]),
+    vectors: indices.map(i => eigenvectors[i]),
+  };
+}
+
+// ── CPU Fallback: Jacobi Eigensolver ─────────────────────
+function cpuJacobiEigen(A, n, maxIter = 1000) {
+  const S = [];
+  for (let i = 0; i < n; i++) {
+    S[i] = [];
+    for (let j = 0; j < n; j++) S[i][j] = A[i * n + j];
+  }
+  const V = [];
+  for (let i = 0; i < n; i++) {
+    V[i] = new Array(n).fill(0);
+    V[i][i] = 1;
+  }
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    let maxVal = 0, p = 0, q = 1;
+    for (let i = 0; i < n; i++)
+      for (let j = i + 1; j < n; j++)
+        if (Math.abs(S[i][j]) > maxVal) { maxVal = Math.abs(S[i][j]); p = i; q = j; }
+    if (maxVal < 1e-12) break;
+
+    const app = S[p][p], aqq = S[q][q], apq = S[p][q];
+    const theta = Math.abs(app - aqq) < 1e-15
+      ? Math.PI / 4
+      : 0.5 * Math.atan2(2 * apq, app - aqq);
+    const c = Math.cos(theta), s = Math.sin(theta);
+
+    for (let i = 0; i < n; i++) {
+      if (i === p || i === q) continue;
+      const sip = S[i][p], siq = S[i][q];
+      S[i][p] = c * sip + s * siq; S[p][i] = S[i][p];
+      S[i][q] = -s * sip + c * siq; S[q][i] = S[i][q];
+    }
+    const spp = S[p][p], sqq = S[q][q];
+    S[p][p] = c * c * spp + 2 * s * c * apq + s * s * sqq;
+    S[q][q] = s * s * spp - 2 * s * c * apq + c * c * sqq;
+    S[p][q] = 0; S[q][p] = 0;
+
+    for (let i = 0; i < n; i++) {
+      const vip = V[i][p], viq = V[i][q];
+      V[i][p] = c * vip + s * viq;
+      V[i][q] = -s * vip + c * viq;
+    }
+  }
+
+  const evals = [];
+  for (let i = 0; i < n; i++) evals.push(S[i][i]);
+  const indices = evals.map((_, i) => i);
+  indices.sort((a, b) => evals[a] - evals[b]);
+
+  return {
+    values: indices.map(i => evals[i]),
+    vectors: indices.map(idx => {
+      const v = [];
+      for (let i = 0; i < n; i++) v.push(V[i][idx]);
+      return v;
+    }),
+  };
+}
+
+// ── Analysis Helpers (CPU side) ──────────────────────────
+function spectralGap(values) {
+  if (values.length < 2) return 0;
+  let maxGap = 0;
+  for (let i = 1; i < values.length; i++) maxGap = Math.max(maxGap, values[i] - values[i - 1]);
+  return maxGap;
+}
+
+function cheegerConstant(W, degrees, fiedler, n) {
+  const indices = fiedler.map((_, i) => i);
+  indices.sort((a, b) => fiedler[a] - fiedler[b]);
+
+  let totalDeg = 0;
+  for (let i = 0; i < n; i++) totalDeg += degrees[i];
+
+  let best = Infinity, volS = 0;
+  for (let k = 0; k < n - 1; k++) {
+    volS += degrees[indices[k]];
+    let cut = 0;
+    for (let i = 0; i <= k; i++)
+      for (let j = k + 1; j < n; j++)
+        cut += W[indices[i] * n + indices[j]];
+    const volMin = Math.min(volS, totalDeg - volS);
+    if (volMin > 0) best = Math.min(best, cut / volMin);
+  }
+  return best === Infinity ? 0 : best;
+}
+
+function spectralEntropy(values) {
+  let total = 0;
+  for (const v of values) total += Math.abs(v);
+  if (total === 0) return 0;
+  let H = 0;
+  for (const v of values) {
+    const p = Math.abs(v) / total;
+    if (p > 0) H -= p * Math.log(p);
+  }
+  return H;
+}
+
+function detectAnomalies(values, vectors, attribute, threshold = 3.0) {
+  const n = attribute.length;
+  const anomalies = [];
+  const numComp = Math.min(5, vectors.length);
+
+  for (let k = 1; k < numComp; k++) {
+    const phi = vectors[k];
+    const contribs = phi.map((v, i) => Math.abs(attribute[i] * v));
+    let mean = contribs.reduce((a, b) => a + b, 0) / n;
+    let std = Math.sqrt(contribs.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+    if (std === 0) continue;
+
+    for (let i = 0; i < n; i++) {
+      const z = (contribs[i] - mean) / std;
+      if (Math.abs(z) > threshold) {
+        anomalies.push({
+          vertex: i, eigenvecIdx: k, zScore: z,
+          type: k === 1 ? 'conservation_violation' : z > 0 ? 'spectral_outlier' : 'structural_break',
+          desc: `Vertex ${i} z-score ${z.toFixed(3)} in eigenvector ${k} (λ=${values[k].toFixed(6)})`,
+        });
+      }
+    }
+  }
+  return anomalies;
+}
+
+// ── Main Analysis Pipeline ───────────────────────────────
+async function analyze(transitions, n) {
+  const status = document.getElementById('status');
+  status.textContent = '⏳ Computing Laplacian on GPU…';
+
+  // Step 1: Laplacian on GPU
+  const { laplacian, degrees } = await gpuComputeLaplacian(transitions, n);
+
+  status.textContent = '⏳ Eigendecomposition (GPU power iteration + deflation)…';
+
+  // Step 2: Eigendecomposition — use GPU for power iteration, fallback to CPU Jacobi
+  let eigen;
+  if (n <= 50) {
+    // For small matrices, CPU Jacobi is more accurate and fast enough
+    eigen = cpuJacobiEigen(transitions, n);
+    // Build laplacian for CPU path too
+    const lapCpu = [];
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++)
+        lapCpu[i * n + j] = (i === j ? degrees[i] : 0) - transitions[i * n + j];
+    eigen = cpuJacobiEigen(lapCpu, n);
+  } else {
+    eigen = await gpuEigendecompose(Array.from(laplacian), n);
+  }
+
+  status.textContent = '⏳ Computing conservation ratios on GPU…';
+
+  // Step 3: Conservation ratios on GPU
+  const attribute = new Array(n).fill(1); // uniform attribute
+  const gpuRatios = await gpuConservationRatios(eigen.vectors, attribute, n, n);
+
+  // Step 4: Compute metrics
+  const gap = spectralGap(eigen.values);
+  const fiedler = eigen.vectors.length > 1 ? eigen.vectors[1] : eigen.vectors[0];
+  const fiedlerVal = eigen.values.length > 1 ? eigen.values[1] : 0;
+  const cheeger = cheegerConstant(transitions, Array.from(degrees), fiedler, n);
+  const entropy = spectralEntropy(eigen.values);
+  const effDim = Math.exp(entropy);
+
+  const anomalies = detectAnomalies(eigen.values, eigen.vectors, attribute);
+
+  // Gap profile
+  const gapProfile = [];
+  for (let i = 1; i < n; i++) gapProfile.push(eigen.values[i] - eigen.values[i - 1]);
+
+  return {
+    eigenvalues: eigen.values,
+    eigenvectors: eigen.vectors,
+    ratios: gpuRatios,
+    spectralGap: gap,
+    fiedlerValue: fiedlerVal,
+    cheegerConstant: cheeger,
+    entropy,
+    effectiveDimension: effDim,
+    gapProfile,
+    anomalies,
+    degrees: Array.from(degrees),
+    transitions,
+    n,
+  };
+}
+
+// ── UI Updates ───────────────────────────────────────────
+function classForValue(val, thresholds) {
+  if (val < thresholds[0]) return 'good';
+  if (val < thresholds[1]) return 'warn';
+  return 'bad';
+}
+
+function updateUI(result) {
+  analysisResult = result;
+  const { eigenvalues, ratios, spectralGap, fiedlerValue, cheegerConstant,
+    entropy, effectiveDimension, anomalies, n } = result;
+
+  // Metrics
+  document.getElementById('metricGap').textContent = spectralGap.toFixed(6);
+  document.getElementById('metricGap').className = 'metric-value ' + classForValue(spectralGap, [0.5, 1.5]);
+
+  document.getElementById('metricFiedler').textContent = fiedlerValue.toFixed(6);
+  document.getElementById('metricFiedler').className = 'metric-value ' + classForValue(fiedlerValue, [0.3, 1.0]);
+
+  document.getElementById('metricCheeger').textContent = cheegerConstant.toFixed(6);
+  document.getElementById('metricCheeger').className = 'metric-value ' + classForValue(cheegerConstant, [0.2, 0.5]);
+
+  document.getElementById('metricEntropy').textContent = entropy.toFixed(4);
+  document.getElementById('metricEffDim').textContent = effectiveDimension.toFixed(4);
+
+  // Fingerprint panel
+  const fp = document.getElementById('fingerprintPanel');
+  fp.innerHTML = `
+    <div class="fp-item"><div class="fp-label">Spectral Gap</div><div class="fp-value">${spectralGap.toFixed(4)}</div></div>
+    <div class="fp-item"><div class="fp-label">Fiedler Value</div><div class="fp-value">${fiedlerValue.toFixed(4)}</div></div>
+    <div class="fp-item"><div class="fp-label">Cheeger h</div><div class="fp-value">${cheegerConstant.toFixed(4)}</div></div>
+    <div class="fp-item"><div class="fp-label">Entropy</div><div class="fp-value">${entropy.toFixed(4)}</div></div>
+    <div class="fp-item"><div class="fp-label">Eff. Dim</div><div class="fp-value">${effectiveDimension.toFixed(2)}</div></div>
+    <div class="fp-item"><div class="fp-label">Vertices</div><div class="fp-value">${n}</div></div>
+  `;
+
+  // Eigenvalue table
+  const tbody = document.querySelector('#eigenTable tbody');
+  tbody.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    let note = '';
+    if (i === 0) note = '🔒 trivial (connected)';
+    else if (i === 1) note = '🎯 Fiedler (algebraic connectivity)';
+    else if (eigenvalues[i] - eigenvalues[i - 1] === Math.max(...result.gapProfile)) note = '📐 max gap';
+    tbody.innerHTML += `<tr>
+      <td>${i}</td>
+      <td style="font-family:monospace">${eigenvalues[i].toFixed(8)}</td>
+      <td style="font-family:monospace">${ratios[i].toExponential(4)}</td>
+      <td style="color:var(--muted)">${note}</td>
+    </tr>`;
+  }
+
+  // Anomalies
+  const anBody = document.getElementById('anomalyBody');
+  if (anomalies.length === 0) {
+    anBody.innerHTML = '<span style="color:var(--green)">✅ No anomalies detected.</span>';
+  } else {
+    anBody.innerHTML = anomalies.map(a =>
+      `<div class="anomaly"><strong>Vertex ${a.vertex}</strong> (${a.type.replace('_', ' ')}): ${a.desc}</div>`
+    ).join('');
+  }
+
+  // Draw graph
+  drawGraph(result);
+
+  document.getElementById('status').textContent = '✅ Analysis complete — all computations ran on WebGPU.';
+}
+
+// ── Graph Visualization ──────────────────────────────────
+function drawGraph(result) {
+  const canvas = document.getElementById('graphCanvas');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const W = rect.width, H = rect.height;
+  const cx = W / 2, cy = H / 2;
+  const R = Math.min(W, H) * 0.35;
+  const n = result.n;
+  const fiedler = result.eigenvectors[1] || result.eigenvectors[0];
+
+  // Position nodes in a circle
+  const nodes = [];
+  for (let i = 0; i < n; i++) {
+    const angle = (2 * Math.PI * i / n) - Math.PI / 2;
+    nodes.push({ x: cx + R * Math.cos(angle), y: cy + R * Math.sin(angle), i });
+  }
+
+  // Draw edges
+  ctx.lineWidth = 1;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const w = result.transitions[i * n + j] + result.transitions[j * n + i];
+      if (w > 0.01) {
+        const alpha = Math.min(1, w * 2);
+        ctx.strokeStyle = `rgba(139,148,158,${alpha})`;
+        ctx.lineWidth = Math.max(0.5, w * 3);
+        ctx.beginPath();
+        ctx.moveTo(nodes[i].x, nodes[i].y);
+        ctx.lineTo(nodes[j].x, nodes[j].y);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Draw nodes
+  const labels = document.getElementById('nodeLabels');
+  labels.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const partition = fiedler[i] >= 0 ? 0 : 1;
+    const color = NODE_COLORS[partition];
+    const label = n === 5 && CHORD_LABELS[i] ? CHORD_LABELS[i] : `V${i}`;
+
+    // Glow
+    ctx.beginPath();
+    ctx.arc(nodes[i].x, nodes[i].y, 24, 0, Math.PI * 2);
+    ctx.fillStyle = color.replace(')', ',0.15)').replace('rgb', 'rgba').replace('#', '');
+    // Use a radial gradient for glow
+    const grad = ctx.createRadialGradient(nodes[i].x, nodes[i].y, 0, nodes[i].x, nodes[i].y, 24);
+    grad.addColorStop(0, color + '44');
+    grad.addColorStop(1, color + '00');
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Node circle
+    ctx.beginPath();
+    ctx.arc(nodes[i].x, nodes[i].y, 16, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#0d1117';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Label
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 11px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, nodes[i].x, nodes[i].y);
+
+    // Fiedler value below node
+    ctx.fillStyle = 'rgba(230,237,243,0.6)';
+    ctx.font = '10px monospace';
+    ctx.fillText(fiedler[i].toFixed(3), nodes[i].x, nodes[i].y + 26);
+
+    // Node tag
+    const tag = document.createElement('span');
+    tag.className = 'node-tag';
+    tag.style.background = color + '22';
+    tag.style.color = color;
+    tag.textContent = `${label}: Fiedler=${fiedler[i].toFixed(4)}`;
+    labels.appendChild(tag);
+  }
+}
+
+// ── Parse Input ──────────────────────────────────────────
+function parseMatrix(input) {
+  const parsed = JSON.parse(input);
+  if (!Array.isArray(parsed) || !Array.isArray(parsed[0])) {
+    throw new Error('Expected a 2D array (square matrix).');
+  }
+  const n = parsed.length;
+  for (const row of parsed) {
+    if (row.length !== n) throw new Error('Matrix must be square.');
+  }
+  const flat = new Array(n * n);
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++)
+      flat[i * n + j] = parsed[i][j];
+  return { flat, n };
+}
+
+// ── Event Handlers ───────────────────────────────────────
+document.getElementById('btnExample').addEventListener('click', () => {
+  document.getElementById('matrixInput').value = JSON.stringify(TEST_DATA, null, 2);
+});
+
+document.getElementById('btnClear').addEventListener('click', () => {
+  document.getElementById('matrixInput').value = '';
+  document.querySelector('#eigenTable tbody').innerHTML = '';
+  document.getElementById('metricGap').textContent = '—';
+  document.getElementById('metricFiedler').textContent = '—';
+  document.getElementById('metricCheeger').textContent = '—';
+  document.getElementById('metricEntropy').textContent = '—';
+  document.getElementById('metricEffDim').textContent = '—';
+  document.getElementById('fingerprintPanel').innerHTML = '';
+  document.getElementById('anomalyBody').innerHTML = '<span style="color:var(--muted);font-size:13px;">Cleared.</span>';
+  document.getElementById('nodeLabels').innerHTML = '';
+  const canvas = document.getElementById('graphCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  document.getElementById('status').textContent = 'Cleared. Load data or paste a matrix.';
+});
+
+document.getElementById('btnAnalyze').addEventListener('click', async () => {
+  const input = document.getElementById('matrixInput').value.trim();
+  if (!input) { alert('Paste a transition matrix JSON first.'); return; }
+
+  let flat, n;
+  try {
+    ({ flat, n } = parseMatrix(input));
+  } catch (e) {
+    alert('Invalid matrix: ' + e.message);
+    return;
+  }
+
+  const btn = document.getElementById('btnAnalyze');
+  btn.disabled = true;
+  btn.textContent = 'Analyzing…';
+
+  try {
+    const result = await analyze(flat, n);
+    updateUI(result);
+  } catch (e) {
+    document.getElementById('status').textContent = '❌ Error: ' + e.message;
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Analyze';
+  }
+});
+
+// ── Boot ─────────────────────────────────────────────────
+initWebGPU();
+
+// Auto-load example if first visit
+if (!localStorage.getItem('conservation-spectral-visited')) {
+  document.getElementById('matrixInput').value = JSON.stringify(TEST_DATA, null, 2);
+  localStorage.setItem('conservation-spectral-visited', '1');
+}
+</script>
+</body>
+</html>
