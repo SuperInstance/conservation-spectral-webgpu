@@ -41,3 +41,5 @@ Requires Chrome 113+, Edge 113+, or another WebGPU-capable browser. A clear fall
 ## Related
 
 - [conservation-spectral-js](https://github.com/SuperInstance/conservation-spectral-js) — Full TypeScript SDK (source of the algorithms)
+
+Part of the [SuperInstance OpenConstruct](https://github.com/SuperInstance/OpenConstruct) ecosystem.
